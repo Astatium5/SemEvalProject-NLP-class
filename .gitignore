@@ -60,6 +60,7 @@ build/
 
 # --- IGNORE TRAINED MODELS ---
 *-qaevasion-*/
+./roberta-base-direct_clarity/*
 
 
 # --- IGNORE RESULTS FOLDER ---
