@@ -1,0 +1,66 @@
+# ===================================================================
+# General: Operating System Files
+# ===================================================================
+.DS_Store
+.DS_Store?
+._*
+.AppleDouble
+.LSOverride
+
+# Windows junk
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# Linux/Vim junk
+*~
+.*.swp
+
+
+# ===================================================================
+# Python & Virtual Environments
+# ===================================================================
+venv/
+env/
+.venv/
+.env/
+
+# Compiled Python files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Package build files
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# Log files
+*.log
+
+
+# ===================================================================
+# Jupyter Notebook
+# ===================================================================
+# Ignore the auto-save/checkpoint directory
+.ipynb_checkpoints/
+
+
+# ===================================================================
+# Environment settings and secret files
+# ===================================================================
+.env
+*.env
+
+# Ignore IDE-specific settings (VS Code, PyCharm)
+.vscode/
+.idea/
+
+# --- IGNORE TRAINED MODELS ---
+*-qaevasion-*/
+
+
+# --- IGNORE RESULTS FOLDER ---
+results/
