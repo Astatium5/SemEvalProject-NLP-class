@@ -150,6 +150,10 @@ print (len(train_dataloader), len(val_dataloader))
 optimizer = AdamW(model.parameters(), lr=1e-5)
 
 num_epochs = 10
+
+out_file = f"{model_name.split('/')[-1]}-qaevasion-{experiment}"
+best_macro_f1 = 0.0
+
 for epoch in range(num_epochs):
     # Training
     model.train()
@@ -200,7 +204,9 @@ for epoch in range(num_epochs):
 
     print(f'Epoch {epoch + 1}/{num_epochs} - Validation Loss: {average_val_loss:.4f} - Accuracy: {accuracy * 100:.2f}% - Macro F1 Score: {macro_f1:.4f}')
 
-# Save the fine-tuned model
-
-out_file = f"{model_name.split('/')[-1]}-qaevasion-{experiment}"
-model.save_pretrained(out_file)
+    if macro_f1 > best_macro_f1:
+        print(f"🎉 New best Macro F1: {macro_f1:.4f} (was {best_macro_f1:.4f}). Saving model...")
+        best_macro_f1 = macro_f1
+        model.save_pretrained(out_file)
+    else:
+        print(f"  Macro F1 did not improve from {best_macro_f1:.4f}.")
