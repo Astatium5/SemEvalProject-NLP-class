@@ -13,10 +13,7 @@ import os
 
 # torch.cuda.empty_cache()
 
-device = torch.device(
-    "mps" if torch.backends.mps.is_available()
-    else "cpu"
-)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 parser = argparse.ArgumentParser(description='')
     
@@ -37,8 +34,7 @@ class CustomDataset(Dataset):
         self.max_length = max_length
         self.texts = texts
         self.labels = labels
-
-        
+ 
 
     def __len__(self):
         return len(self.texts)
@@ -110,6 +106,7 @@ print(f"Model {model_name} loaded. Max sequence length set to {max_size}.")
 
 
 dataset = load_dataset("ailsntua/QEvasion")
+dataset = dataset.filter(lambda x: x[label] != '')
 all_texts = [f"Question: {row['interview_question']}\n\nAnswer: {row['interview_answer']}\n\nSubanswer: {row['question']}" for row in dataset['test']]
 all_labels = [mapping_labels[row[label]] for row in dataset['test']]
 

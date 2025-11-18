@@ -2,7 +2,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from torch.optim import AdamW
 from datasets import load_dataset
-from transformers import RobertaTokenizer, RobertaForSequenceClassification
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, DefaultDataCollator
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import f1_score, accuracy_score
 from tqdm import tqdm
@@ -17,25 +17,34 @@ from collections import Counter
 import torch
 # torch.cuda.empty_cache()
 
-device = torch.device(
-    "mps" if torch.backends.mps.is_available()
-    else "cpu"
-)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 parser = argparse.ArgumentParser(description='')
     
 # Adding arguments
-parser.add_argument('--model_name', type=str)
-parser.add_argument('--experiment', type=str)
+parser.add_argument('--model_name', type=str, required=True)
+parser.add_argument('--experiment', type=str, required=True)
+parser.add_argument('--batch_size', type=int, default=16)
 args = parser.parse_args()
 
 model_name = args.model_name
 experiment = args.experiment
+batch_size = args.batch_size
 
 
 if experiment == "evasion_based_clarity":
     num_labels = 9
-    mapping_labels = {'Explicit': 0, 'Implicit': 1, 'Dodging': 2, 'Deflection': 3, 'Partial/half-answer': 4, 'General': 5, 'Declining to answer': 6, 'Claims ignorance': 7, 'Clarification': 8}
+    mapping_labels = {
+        'Explicit': 0,
+        'Implicit': 1,
+        'Dodging': 2,
+        'Deflection': 3,
+        'Partial/half-answer': 4,
+        'General': 5,
+        'Declining to answer': 6,
+        'Claims ignorance': 7,
+        'Clarification': 8
+    }
     label = "evasion_label"
 elif experiment == "direct_clarity":
     num_labels = 3
@@ -44,16 +53,11 @@ elif experiment == "direct_clarity":
 
 
 # --- Load Model and Tokenizer ---
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
-
 print(f"Loading model and tokenizer for: {model_name}")
 
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-model = AutoModelForSequenceClassification.from_pretrained(
-    model_name, 
-    num_labels=num_labels
-).to(device)
+model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=num_labels)
 
 # --- Set max_size based on model type (if needed) ---
 # We still need to handle XLNet's different input size, but that's it.
@@ -64,87 +68,86 @@ else:
 
 print(f"Model {model_name} loaded. Max sequence length set to {max_size}.")
 
-
-# Define your dataset class
-class CustomDataset(Dataset):
-    def __init__(self, texts, labels, tokenizer, max_length=512):
-        self.max_length = max_length
-        self.input_ids = []
-        self.attention_masks = []
-        self.labels = []
-
-        for text, label in zip(texts, labels):
-            enc = tokenizer(
-                text,
-                truncation=True,
-                padding="max_length",
-                max_length=max_length,
-                return_tensors="pt"
-            )
-
-            # enc["input_ids"]: (1, max_length) → squeeze(0) = (max_length)
-            self.input_ids.append(enc["input_ids"].squeeze(0))
-            self.attention_masks.append(enc["attention_mask"].squeeze(0))
-            self.labels.append(torch.tensor(label))
-
-    def __len__(self):
-        return len(self.labels)
-
-    def __getitem__(self, idx):
-        return {
-            "input_ids": self.input_ids[idx],
-            "attention_mask": self.attention_masks[idx],
-            "labels": self.labels[idx],
-        }
-
-
 # Example data
 
 dataset = load_dataset("ailsntua/QEvasion")
-all_texts = [f"Question: {row['interview_question']}\n\nAnswer: {row['interview_answer']}\n\nSubanswer: {row['question']}" for row in dataset['train']]
-all_labels = [mapping_labels[row[label]] for row in dataset['train']]
-print (set(all_labels))
-print (len(all_texts))
+dataset = dataset.filter(lambda x: x[label] != '')
 
-train_texts, val_texts, train_labels, val_labels = train_test_split(
-    all_texts,
-    all_labels,
-    test_size=0.1,      # 10% validation
-    random_state=42,    # reproducibility
-    stratify=all_labels # stratify by labels
+def tokenize_function(examples):
+    inputs = [q + " " + a for q, a in zip(examples["interview_question"], examples["interview_answer"])]
+    
+    tokenized_inputs = tokenizer(
+        inputs, 
+        truncation=True, 
+        padding="max_length", 
+        max_length=max_size
+    )
+
+    tokenized_inputs["labels"] = [mapping_labels[str_label] for str_label in examples[label]]
+
+    return tokenized_inputs
+
+train_data_raw = dataset['train']
+
+tokenized_dataset = train_data_raw.map(
+    tokenize_function, 
+    batched=True, 
+    num_proc=4, # Use 4 processes for tokenization
+    remove_columns=[col for col in dataset["train"].column_names if col not in [label, "ID"]]
+)
+tokenized_dataset.set_format("torch")
+
+print("Splitting dataset into 90% Train and 10% Validation...")
+split = tokenized_dataset.train_test_split(test_size=0.1, seed=42)
+
+train_dataset = split["train"]
+val_dataset = split["test"]
+
+print(f"Train Size: {len(train_dataset)}")
+print(f"Val Size: {len(val_dataset)}")
+
+data_collator = DefaultDataCollator()
+
+train_dataloader = DataLoader(
+    train_dataset, 
+    batch_size=batch_size, 
+    shuffle=True, 
+    collate_fn=data_collator
 )
 
-# Create datasets and dataloaders
-train_dataset = CustomDataset(train_texts, train_labels, max_length=512, tokenizer=tokenizer)
-val_dataset = CustomDataset(val_texts, val_labels, max_length=512, tokenizer=tokenizer)
+val_dataloader = DataLoader(
+    val_dataset, 
+    batch_size=batch_size, 
+    collate_fn=data_collator
+)
 
+print(f"DataLoaders ready. Training batches: {len(train_dataloader)}, Val batches: {len(val_dataloader)}")
+
+all_labels = [mapping_labels[row[label]] for row in dataset['train']]
 label_counts = Counter(all_labels)
 print(label_counts)
 num_labels = len(mapping_labels)
 total = sum(label_counts.values())
-class_weights = torch.tensor(
-    [total / label_counts[i] for i in range(num_labels)], 
-    dtype=torch.float
-).to(device)
+
+class_weights_list = []
+for i in range(num_labels):
+    count = label_counts[i]
+    if count > 0:
+        weight = total / count
+    else:
+        weight = 1.0 # Default weight for missing classes (prevents crash)
+    class_weights_list.append(weight)
+
+class_weights_tensor = torch.tensor(class_weights_list, dtype=torch.float)
+
+model.to(device)
+class_weights = class_weights_tensor.to(device)
 
 loss_fn = torch.nn.CrossEntropyLoss(weight=class_weights)
 
 print("Class weights:", class_weights)
 
-sample_weights = [1.0 / label_counts[label] for label in train_labels]
-sample_weights = torch.tensor(sample_weights, dtype=torch.float)
-
-# balancing batch sampler
-sampler = WeightedRandomSampler(
-    weights=sample_weights,
-    num_samples=len(sample_weights),
-    replacement=True
-)
-train_dataloader = DataLoader(train_dataset, batch_size=4, sampler=sampler)
-val_dataloader = DataLoader(val_dataset, batch_size=4)
-
-
-print (len(train_dataloader), len(val_dataloader))
+print(len(train_dataloader), len(val_dataloader))
 
 # Fine-tuning
 optimizer = AdamW(model.parameters(), lr=1e-5)
@@ -160,7 +163,7 @@ epochs_without_improvement = 0
 for epoch in range(num_epochs):
     # Training
     model.train()
-    for batch in tqdm(train_dataloader, desc=f'Epoch {epoch + 1}/ {num_epochs} - Training'):
+    for batch in tqdm(train_dataloader, desc=f'Epoch {epoch + 1}/{num_epochs} - Training'):
         inputs = batch['input_ids'].to(device)
         attention_mask = batch['attention_mask'].to(device)
         labels = batch['labels'].to(device)
@@ -196,10 +199,6 @@ for epoch in range(num_epochs):
             _, predicted = torch.max(logits, 1)
             pred_labels.extend(predicted.cpu().numpy())
             true_labels.extend(labels.cpu().numpy())
-
-            pred_labels.extend(predicted.cpu().numpy())
-            true_labels.extend(labels.cpu().numpy())
-
 
     average_val_loss = val_loss / len(val_dataloader)
     accuracy = accuracy_score(true_labels, pred_labels)
