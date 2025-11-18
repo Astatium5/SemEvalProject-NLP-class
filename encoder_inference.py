@@ -79,7 +79,7 @@ def collate_fn(batch):
 
 if experiment == "evasion_based_clarity":
     num_labels = 9
-    mapping_labels = {'Explicit': 0, 'Implicit': 1, 'Dodging': 2, 'Deflection': 3, 'Partial': 4, 'General': 5, 'Declining': 6, 'Ignorance': 7, 'Clarification': 8}
+    mapping_labels = {'Explicit': 0, 'Implicit': 1, 'Dodging': 2, 'Deflection': 3, 'Partial/half-answer': 4, 'General': 5, 'Declining to answer': 6, 'Claims ignorance': 7, 'Clarification': 8}
     label = "evasion_label"
 elif experiment == "direct_clarity":
     num_labels = 3
