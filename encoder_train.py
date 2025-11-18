@@ -154,6 +154,9 @@ num_epochs = 10
 out_file = f"{model_name.split('/')[-1]}-qaevasion-{experiment}"
 best_macro_f1 = 0.0
 
+patience = 3
+epochs_without_improvement = 0
+
 for epoch in range(num_epochs):
     # Training
     model.train()
@@ -208,5 +211,15 @@ for epoch in range(num_epochs):
         print(f"🎉 New best Macro F1: {macro_f1:.4f} (was {best_macro_f1:.4f}). Saving model...")
         best_macro_f1 = macro_f1
         model.save_pretrained(out_file)
+
+        epochs_without_improvement = 0
     else:
         print(f"  Macro F1 did not improve from {best_macro_f1:.4f}.")
+
+        epochs_without_improvement += 1
+
+        if epochs_without_improvement >= patience:
+            print(f"\n--- 🛑 STOPPING EARLY ---")
+            print(f"No improvement for {patience} consecutive epochs.")
+            print(f"Best model (F1: {best_macro_f1:.4f}) was saved to {out_file}")
+            break
