@@ -43,24 +43,26 @@ elif experiment == "direct_clarity":
     label = "clarity_label"
 
 
-# Load pre-trained RoBERTa model and tokenizer
-if 'roberta' in model_name: 
-    tokenizer = RobertaTokenizer.from_pretrained(model_name)
-    model = RobertaForSequenceClassification.from_pretrained(model_name, num_labels=num_labels).to(device)
-    max_size = 512
+# --- Load Model and Tokenizer ---
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
-elif "xlnet" in model_name:
-    # Load pre-trained XLNet model and tokenizer
-    from transformers import XLNetTokenizer, XLNetForSequenceClassification
-    tokenizer = XLNetTokenizer.from_pretrained(model_name)
-    model = XLNetForSequenceClassification.from_pretrained(model_name, num_labels=num_labels).to(device)
+print(f"Loading model and tokenizer for: {model_name}")
+
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+
+model = AutoModelForSequenceClassification.from_pretrained(
+    model_name, 
+    num_labels=num_labels
+).to(device)
+
+# --- Set max_size based on model type (if needed) ---
+# We still need to handle XLNet's different input size, but that's it.
+if "xlnet" in model_name:
     max_size = 4096
-
-elif "deberta" in model_name: 
-    from transformers import DebertaTokenizer, DebertaForSequenceClassification
-    tokenizer = DebertaTokenizer.from_pretrained(model_name)
-    model = DebertaForSequenceClassification.from_pretrained(model_name, num_labels=num_labels).to(device)
+else:
     max_size = 512
+
+print(f"Model {model_name} loaded. Max sequence length set to {max_size}.")
 
 
 # Define your dataset class
