@@ -1,4 +1,4 @@
-# 🤖 CSCI-LING 5832 NLP: SemEval 2026 Shared Task
+# CSCI-LING 5832 NLP: SemEval 2026 Shared Task
 
 ---
 
@@ -8,7 +8,7 @@ This repository will document our journey as we tackle a shared task from the up
 
 ---
 
-## 🚧 Project Status: Pre-Development
+## Project Status: Pre-Development
 
 **Current Stage:** Idea Selection & Planning
 
@@ -16,7 +16,7 @@ As of now, this repository is a placeholder for our future work. We are in the i
 
 ---
 
-## 🧑‍💻 Our Team
+## Our Team
 
 This project is a collaborative effort by:
 
@@ -26,7 +26,7 @@ This project is a collaborative effort by:
 
 ---
 
-## 🎯 Future Roadmap
+## Future Roadmap
 
 Once we select a task, our high-level plan will include the following milestones:
 

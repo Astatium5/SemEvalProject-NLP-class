@@ -63,5 +63,5 @@ build/
 ./roberta-base-direct_clarity/*
 
 
-# --- IGNORE RESULTS FOLDER ---
-results/
+# --- IGNORE MODELS FOLDER ---
+models/

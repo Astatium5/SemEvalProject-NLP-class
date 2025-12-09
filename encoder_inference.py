@@ -1,141 +1,146 @@
-import torch
-from torch.utils.data import DataLoader, Dataset
-from torch.optim import AdamW
-from datasets import load_dataset
-from transformers import RobertaTokenizer, RobertaForSequenceClassification
-from sklearn.model_selection import train_test_split
-from tqdm import tqdm
-import argparse
-import pandas as pd
 import os
+import argparse
+from pathlib import Path
 
-# os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:24"
-
-# torch.cuda.empty_cache()
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-parser = argparse.ArgumentParser(description='')
-    
-# Adding arguments
-parser.add_argument('--model_name', type=str)
-parser.add_argument('--experiment', type=str)
-args = parser.parse_args()
-
-model_name = args.model_name
-experiment = args.experiment
+import torch
+import pandas as pd
+from datasets import load_dataset
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, DataCollatorWithPadding
+from torch.utils.data import DataLoader
+from tqdm import tqdm
+from sklearn.metrics import f1_score
 
 
-
-# Define your dataset class
-class CustomDataset(Dataset):
-    def __init__(self, texts, labels, max_length=512):  # You can set max_length to an appropriate value
-
-        self.max_length = max_length
-        self.texts = texts
-        self.labels = labels
- 
-
-    def __len__(self):
-        return len(self.texts)
-
-    def __getitem__(self, idx):
-        inputs = tokenizer(
-            self.texts[idx],
-            return_tensors='pt',
-            # truncation=True,
-            padding='max_length',  # Use padding to ensure all sequences have the same length
-            max_length=self.max_length
-        )
-
-        is_truncated = False
-        if len(inputs['input_ids'][0]) > self.max_length:
-            is_truncated = True
-
-        inputs = tokenizer(
-            self.texts[idx],
-            return_tensors='pt',
-            truncation=True,
-            padding='max_length',  # Use padding to ensure all sequences have the same length
-            max_length=self.max_length
-        )
-           
-        label = torch.tensor(self.labels[idx])
-        return inputs, label, is_truncated
-
-def collate_fn(batch):
-    inputs, labels, is_truncated = zip(*batch)
-    return {
-        'input_ids': torch.stack([x['input_ids'].squeeze() for x in inputs]),
-        'attention_mask': torch.stack([x['attention_mask'].squeeze() for x in inputs]),
-        'labels': torch.tensor(labels), 
-        'is_truncated': is_truncated
-    }
+# -----------------------------
+# Task 1 only: direct_clarity
+# -----------------------------
+LABEL_COL = "clarity_label"
+ID_COL = "index"
+LABEL2ID = {"Clear Reply": 0, "Ambivalent": 1, "Clear Non-Reply": 2}
+ID2LABEL = {v: k for k, v in LABEL2ID.items()}
+LABEL_ORDER = ["Clear Reply", "Ambivalent", "Clear Non-Reply"]
 
 
-if experiment == "evasion_based_clarity":
-    num_labels = 9
-    mapping_labels = {'Explicit': 0, 'Implicit': 1, 'Dodging': 2, 'Deflection': 3, 'Partial/half-answer': 4, 'General': 5, 'Declining to answer': 6, 'Claims ignorance': 7, 'Clarification': 8}
-    label = "evasion_label"
-elif experiment == "direct_clarity":
-    num_labels = 3
-    mapping_labels = {'Clear Reply': 0, "Ambivalent": 1, "Clear Non-Reply": 2}
-    label = "clarity_label"
+def find_project_root() -> Path:
+    return Path(file).resolve().parent
 
 
-# --- Load Model and Tokenizer ---
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
-
-print(f"Loading model and tokenizer for: {model_name}")
-
-tokenizer = AutoTokenizer.from_pretrained(model_name)
-
-model = AutoModelForSequenceClassification.from_pretrained(
-    model_name, 
-    num_labels=num_labels
-).to(device)
-
-# --- Set max_size based on model type (if needed) ---
-# We still need to handle XLNet's different input size, but that's it.
-if "xlnet" in model_name:
-    max_size = 4096
-else:
-    max_size = 512
-
-print(f"Model {model_name} loaded. Max sequence length set to {max_size}.")
+def resolve_paths(project_root: Path):
+    models_path = Path(os.environ.get("LOCAL_MODELS_PATH", str(project_root / "models"))).resolve()
+    results_path = Path(os.environ.get("LOCAL_RESULTS_PATH", str(project_root / "results"))).resolve()
+    results_path.mkdir(parents=True, exist_ok=True)
+    return models_path, results_path
 
 
-dataset = load_dataset("ailsntua/QEvasion")
-dataset = dataset.filter(lambda x: x[label] != '')
-all_texts = [f"Question: {row['interview_question']}\n\nAnswer: {row['interview_answer']}\n\nSubanswer: {row['question']}" for row in dataset['test']]
-all_labels = [mapping_labels[row[label]] for row in dataset['test']]
+def find_checkpoint(models_path: Path, project_root: Path, cwd: Path, ckpt_name: str) -> Path | None:
+    for p in [models_path / ckpt_name, project_root / ckpt_name, cwd / ckpt_name]:
+        if p.exists() and p.is_dir():
+            return p
+    return None
 
-# Create datasets and dataloaders
-val_dataset = CustomDataset(all_texts, all_labels, max_length=512)
-val_dataloader = DataLoader(val_dataset, batch_size=1, shuffle=False, collate_fn=collate_fn)
 
-# Inside the validation loop
-import numpy as np
+def tokenizer_load_path(model_name: str, ckpt_path: Path | None) -> str:
+    if ckpt_path:
+        # if tokenizer artifacts exist in checkpoint, use them
+        for fname in [
+            "tokenizer.json", "tokenizer_config.json", "vocab.json", "vocab.txt",
+            "merges.txt", "sentencepiece.bpe.model", "special_tokens_map.json"
+        ]:
+            if (ckpt_path / fname).exists():
+                return str(ckpt_path)
+    return model_name
 
-model.eval()
-inv_mapping_labels = {v:k for k, v in mapping_labels.items()}
-results = []
 
-true_labels, pred_labels = [], []
-with torch.no_grad():
-    for batch in tqdm(val_dataloader):
-        inputs = batch['input_ids'].to(device)
-        attention_mask = batch['attention_mask'].to(device)
-        labels = batch['labels'].to(device)
-        is_truncated = batch['is_truncated']
-        
-        outputs = model(input_ids=inputs, attention_mask=attention_mask, labels=labels)
-        for true_label, pred_label, is_trunc in zip(labels.cpu().numpy(), outputs["logits"].cpu().numpy(), is_truncated):
-            true_label = inv_mapping_labels[true_label]
-            pred_label = inv_mapping_labels[np.argmax(pred_label)]
-            results.append([is_trunc, true_label, pred_label])
+def run_inference(model, tokenizer, tokenized_ds, device):
+    collator = DataCollatorWithPadding(tokenizer, pad_to_multiple_of=8)
 
-df = pd.DataFrame(results, columns=['is_truncated', 'true_labels', 'pred_labels'])
-os.makedirs("./results", exist_ok=True)
-df.to_csv(f"./results/{model_name.split('/')[-1]}-{experiment}.csv")
+    # try larger batch sizes first; auto-back off on OOM
+    for bs in [128, 64, 32, 16]:
+        try:
+            dl = DataLoader(tokenized_ds, batch_size=bs, shuffle=False, collate_fn=collator)
+            preds = []
+            model.eval()
+            with torch.no_grad():
+                for batch in tqdm(dl, desc=f"Inference (bs={bs})"):
+                    input_ids = batch["input_ids"].to(device, non_blocking=True)
+                    attention_mask = batch["attention_mask"].to(device, non_blocking=True)
+                    logits = model(input_ids=input_ids, attention_mask=attention_mask).logits
+                    preds.extend(torch.argmax(logits, dim=-1).detach().cpu().tolist())
+            return preds
+        except torch.cuda.OutOfMemoryError:
+            torch.cuda.empty_cache()
+            continue
 
+    raise RuntimeError("OOM for all attempted batch sizes: 128, 64, 32, 16")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model_name", type=str, required=True)
+    parser.add_argument("--experiment", type=str, required=True)
+    args = parser.parse_args()
+
+    if args.experiment != "direct_clarity":
+        raise ValueError("This encoder_inference.py is Task 1 only: --experiment must be 'direct_clarity'.")
+
+    model_name = args.model_name
+    model_id = model_name.split("/")[-1]
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    project_root = find_project_root()
+    models_path, results_path = resolve_paths(project_root)
+
+    ckpt_name = f"{model_id}-qaevasion-direct_clarity"
+    ckpt_path = find_checkpoint(models_path, project_root, Path.cwd(), ckpt_name)
+
+    if ckpt_path:
+        print(f"Loading FINETUNED checkpoint: {ckpt_path}")
+        model_load = str(ckpt_path)
+    else:
+        print(f"WARNING: No checkpoint folder found for {ckpt_name}. Falling back to base model: {model_name}")
+        model_load = model_name
+
+    tok_load = tokenizer_load_path(model_name, ckpt_path)
+    tokenizer = AutoTokenizer.from_pretrained(tok_load)
+    # IMPORTANT: do NOT pass num_labels here; it can re-init the head and ruin the checkpoint
+    model = AutoModelForSequenceClassification.from_pretrained(model_load)
+    model.to(device)
+
+    max_len = 512
+
+    ds = load_dataset("ailsntua/QEvasion")["test"]
+    ds = ds.filter(lambda x: x.get(LABEL_COL, "") != "")
+
+    if ID_COL not in ds.column_names:
+        raise ValueError(f"Expected ID column '{ID_COL}' not found. Available columns: {ds.column_names}")
+
+    ids = ds[ID_COL]
+    true_labels = ds[LABEL_COL]
+
+    def tok_fn(examples):
+        texts = [q + " " + a for q, a in zip(examples["interview_question"], examples["interview_answer"])]
+        return tokenizer(texts, truncation=True, max_length=max_len)
+
+    # Keep only tokenized tensors to avoid collator trying to tensorize strings
+    tokenized = ds.map(tok_fn, batched=True, num_proc=4, remove_columns=ds.column_names)
+    tokenized.set_format(type="torch", columns=["input_ids", "attention_mask"])
+
+    pred_ids = run_inference(model, tokenizer, tokenized, device)
+    pred_labels = [ID2LABEL[i] for i in pred_ids]
+
+    out_df = pd.DataFrame({
+        "ID": ids,                 # submission-friendly name
+        "true_labels": true_labels,
+        "pred_labels": pred_labels,
+    })
+
+    out_path = results_path / f"{model_id}-direct_clarity.csv"
+    out_df.to_csv(out_path, index=False)
+
+    mf1 = f1_score(true_labels, pred_labels, average="macro", labels=LABEL_ORDER)
+    print(f"Saved: {out_path} (rows={len(out_df)}), Macro-F1={mf1:.4f}")
+
+
+if name == "main":
+    main()

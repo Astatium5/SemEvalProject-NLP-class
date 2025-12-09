@@ -8,14 +8,9 @@ from sklearn.metrics import f1_score, accuracy_score
 from tqdm import tqdm
 import argparse
 from collections import Counter
-
-
-# import os
-
-# os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:24"
+from transformers import DataCollatorWithPadding
 
 import torch
-# torch.cuda.empty_cache()
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -59,12 +54,7 @@ tokenizer = AutoTokenizer.from_pretrained(model_name)
 
 model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=num_labels)
 
-# --- Set max_size based on model type (if needed) ---
-# We still need to handle XLNet's different input size, but that's it.
-if "xlnet" in model_name:
-    max_size = 4096
-else:
-    max_size = 512
+max_size = 512
 
 print(f"Model {model_name} loaded. Max sequence length set to {max_size}.")
 
@@ -78,8 +68,7 @@ def tokenize_function(examples):
     
     tokenized_inputs = tokenizer(
         inputs, 
-        truncation=True, 
-        padding="max_length", 
+        truncation=True,  
         max_length=max_size
     )
 
@@ -95,7 +84,7 @@ tokenized_dataset = train_data_raw.map(
     num_proc=4, # Use 4 processes for tokenization
     remove_columns=[col for col in dataset["train"].column_names if col not in [label, "ID"]]
 )
-tokenized_dataset.set_format("torch")
+tokenized_dataset.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
 
 print("Splitting dataset into 90% Train and 10% Validation...")
 split = tokenized_dataset.train_test_split(test_size=0.1, seed=42)
@@ -106,12 +95,13 @@ val_dataset = split["test"]
 print(f"Train Size: {len(train_dataset)}")
 print(f"Val Size: {len(val_dataset)}")
 
-data_collator = DefaultDataCollator()
+data_collator = DataCollatorWithPadding(tokenizer, pad_to_multiple_of=8)
 
 train_dataloader = DataLoader(
     train_dataset, 
     batch_size=batch_size, 
-    shuffle=True, 
+    shuffle=True,
+    num_workers=4,
     collate_fn=data_collator
 )
 
@@ -142,7 +132,6 @@ class_weights_tensor = torch.tensor(class_weights_list, dtype=torch.float)
 
 model.to(device)
 class_weights = class_weights_tensor.to(device)
-
 loss_fn = torch.nn.CrossEntropyLoss(weight=class_weights)
 
 print("Class weights:", class_weights)
@@ -205,20 +194,3 @@ for epoch in range(num_epochs):
     macro_f1 = f1_score(true_labels, pred_labels, average='macro')
 
     print(f'Epoch {epoch + 1}/{num_epochs} - Validation Loss: {average_val_loss:.4f} - Accuracy: {accuracy * 100:.2f}% - Macro F1 Score: {macro_f1:.4f}')
-
-    if macro_f1 > best_macro_f1:
-        print(f"🎉 New best Macro F1: {macro_f1:.4f} (was {best_macro_f1:.4f}). Saving model...")
-        best_macro_f1 = macro_f1
-        model.save_pretrained(out_file)
-
-        epochs_without_improvement = 0
-    else:
-        print(f"  Macro F1 did not improve from {best_macro_f1:.4f}.")
-
-        epochs_without_improvement += 1
-
-        if epochs_without_improvement >= patience:
-            print(f"\n--- 🛑 STOPPING EARLY ---")
-            print(f"No improvement for {patience} consecutive epochs.")
-            print(f"Best model (F1: {best_macro_f1:.4f}) was saved to {out_file}")
-            break
