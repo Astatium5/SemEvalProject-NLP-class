@@ -1,0 +1,20 @@
+name: nlp-semeval
+channels:
+  - pytorch
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip:
+    - torch
+    - transformers
+    - datasets
+    - scikit-learn
+    - accelerate
+    - pandas
+    - numpy
+    - tqdm
+    - sentence-transformers
+    - peft
+    - bitsandbytes
+    - trl
